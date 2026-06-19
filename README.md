@@ -27,28 +27,21 @@ skill-dynamic-page-to-markdown/
 
 ## 安装
 
-### 方式一：通过 Mavis 导入
-
-将本目录作为技能安装到 Mavis：
-
-```powershell
-mavis skill install <本地路径>
-```
-
-### 方式二：通过 Claude Code 使用
-
-将本目录放入 Claude Code 的 skills 扫描路径即可自动识别。
-
-### 方式三：通过 GitHub 仓库安装
+### 方式一：通过 GitHub 仓库导入到上游系统
 
 ```bash
 git clone https://github.com/JasonCai2024/skill-dynamic-page-to-markdown.git
 ```
 
+### 方式二：作为技能仓库直接导入
+
+使用仓库根目录中的 `SKILL.md`、`references/`、`scripts/` 作为完整技能内容进行导入。
+
 ## 前置依赖
 
-- **browser-use MCP** 已配置并运行（端口 9222，驱动 Edge 浏览器）
-- Mavis 或 Claude Code 运行时环境
+- 提供 browser-use MCP 能力的运行时
+- Python 3.8+（用于运行 `scripts/html_to_markdown.py`）
+- 支持读取仓库根目录技能结构的上游系统
 
 > 注意：本技能不依赖任何外部 API 或凭证，无需配置 `.env`。
 
@@ -85,15 +78,21 @@ flowchart TD
 ## 调用示例
 
 ```
-Extract this page to Markdown: https://example.com/article
-Save the content from this dynamically loaded page
-Scrape this JS-rendered webpage and save as markdown
+把这个页面保存成 Markdown：https://example.com/article
+提取这个动态页面正文并导出 markdown
+抓取这个 JS 渲染页面的内容
+把这个对话页面转成 markdown 文件
 ```
 
 ## 凭证安全
 
 本技能**不涉及任何外部 API 调用**，不存储、不使用任何敏感凭证。
 `.env.example` 文件仅作为规范占位，实际运行无需任何环境变量。
+
+## 获取与安装说明
+
+仓库根目录适合作为独立技能仓库维护和发布。
+如需本地扫描路径安装、Claude Code 本地发现或手动 slash 调用，请参考同级独立说明文档，不在本仓库 README 中展开。
 
 ## 参考链接
 

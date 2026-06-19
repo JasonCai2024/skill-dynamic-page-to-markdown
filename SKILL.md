@@ -1,6 +1,6 @@
 ---
 name: skill-dynamic-page-to-markdown
-description: 将 JavaScript 动态渲染的网页内容提取并保存为 Markdown 文档。当用户提供包含 JS 渲染内容的网页 URL，且无法通过简单 HTTP 请求提取时触发。触发词：保存网页内容、提取动态页面、抓取 JS 渲染页面。
+description: 将 JavaScript 动态渲染网页的已渲染 DOM 内容提取、清洗并保存为 Markdown 文档。用于用户提供网页 URL，并要求“保存网页内容”“提取动态页面”“抓取 JS 渲染页面”“转成 Markdown”“保存对话页/文档页/文章页”为 Markdown 时触发；尤其适用于简单 HTTP 抓取拿不到正文、必须通过真实浏览器加载后再提取的场景。
 disable-model-invocation: true
 user-invocable: true
 argument-hint: [webpage-url]
@@ -24,35 +24,44 @@ argument-hint: [webpage-url]
 
 ### Step 1：打开目标页面
 
-使用 `browser-use_browser_navigate` 打开目标网页 URL。
+使用 `browser_navigate` 打开目标网页 URL。
 
 ### Step 2：验证页面加载
 
-使用 `browser-use_browser_get_state` 截图确认页面已加载（`include_screenshot: true`）。
+使用 `browser_get_state` 截图确认页面已加载（`include_screenshot: true`）。
 
 ### Step 3：滚动加载全部内容
 
-使用 `browser-use_browser_scroll` 触发懒加载内容。重复滚动直到所有内容可见。若页面无限滚动，则滚动至底部后等待 2 秒再继续，直到新增内容不再变化。
+使用 `browser_scroll` 触发懒加载内容。重复滚动直到所有内容可见。若页面无限滚动，则滚动至底部后等待 2 秒再继续，直到连续两次滚动后新增内容不再变化。
 
 ### Step 4：提取完整 HTML
 
-使用 `browser-use_browser_get_html` 获取页面完整 DOM HTML。**不要**使用 `browser-use_browser_extract_content`，后者无法获取 JS 渲染页面的真实 DOM。
+使用 `browser_get_html` 获取页面完整 DOM HTML。只有在 DOM 提取明显失败时，才允许回退到 `browser_extract_content`。
 
 ### Step 5：解析 HTML 结构
 
-从 HTML 中识别语义内容容器：
+优先识别正文容器，并尽量排除导航、页脚、侧栏、弹窗和广告。优先级如下：
 
-- 主内容区：`<main>`、`<article>` 或其他主内容容器
-- 文本块：`<p>`、`<div>` 含文本的节点
+- 主内容区：`<main>`、`<article>`、`[role="main"]`
+- 文本块：`<p>` 及包含连续文本的语义容器
 - 列表：`<ul>`、`<ol>` 及其 `<li>` 子项
 - 标题层级：保留 `<h1>` 至 `<h6>` 的层级关系
-- 聊天/对话页面：按 `role` 属性区分用户与助手消息并标注归属
+- 聊天/对话页面：按 `role`、消息容器结构或发言顺序区分用户与助手消息并标注归属
 
-### Step 6：清理并转换为 Markdown
+### Step 6：调用脚本转换为 Markdown
 
-- 移除 `<script>`、`<style>` 标签及全部属性
-- 保留语义结构：标题、列表、引用、代码块
-- 将 HTML 标签转换为对应 Markdown 格式
+将 HTML 写入临时文件后，优先调用仓库内脚本：
+
+```bash
+python scripts/html_to_markdown.py --file <captured.html> --url "<url>" --title "<page_title>"
+```
+
+要求脚本输出满足以下规则：
+
+- 移除 `<script>`、`<style>` 及其内容
+- 保留语义结构：标题、列表、引用、链接、图片、代码块
+- 保留代码块正文和语言标记
+- 正文为空、代码块为空、出现大段样式文本时，视为转换失败
 
 ### Step 7：按模板格式化输出
 
@@ -73,16 +82,17 @@ argument-hint: [webpage-url]
 
 ### Step 8：保存文档
 
-使用 `write` 工具写入文件（UTF-8 编码）。
+将脚本标准输出写入 `output_path`（UTF-8 编码）。若未提供 `output_path`，则使用基于 URL 推断的文件名。
 
 ## Decision Rules
 
 1. **页面加载失败**：重试导航最多 2 次，仍失败则报告错误
 2. **内容被截断**：向下滚动后重新获取 HTML
 3. **无法确定标题**：使用文件名或 URL 路径作为回退标题
-4. **聊天/对话页面**：必须按 `role` 区分用户消息与助手回复，并标注来源
-5. **代码块保留**：保留原始缩进和语言标记（` ```lang `）
-6. **图片处理**：若需保留图片，提取 `src` 属性并保留 Markdown 图片语法；不需要额外下载
+4. **聊天/对话页面**：必须尽量区分用户消息与助手回复，并在 Markdown 中保留发言顺序
+5. **代码块保留**：保留原始换行、缩进和语言标记（` ```lang `）
+6. **图片处理**：若需保留图片，仅保留 `src` 与 Markdown 图片语法；不额外下载资源
+7. **正文定位失败**：先重新滚动并重新抓取 DOM；仍失败时降级使用 `browser_extract_content`
 
 ## Output Requirements
 
@@ -97,24 +107,36 @@ argument-hint: [webpage-url]
 1. 确认文件写入成功
 2. 确认 Markdown 包含有意义内容（非空）
 3. 确认标题层级被正确保留（`h1` → `#`，`h2` → `##`，以此类推）
-4. 确认无残留 HTML 标签（特殊标签 `<code>`、`<strong>` 等除外）
+4. 确认无残留 HTML 标签和大段 CSS/JS 文本
+5. 确认代码块正文未丢失
+6. 确认正文不是以站点导航、页脚或广告为主
 
 ## Fallback
 
 | 失败场景 | 回退方案 |
 |---------|---------|
-| HTML 解析失败 | 降级使用 `browser-use_browser_extract_content` 作为替代 |
+| DOM 提取或正文定位失败 | 降级使用 `browser_extract_content` 作为替代 |
 | 浏览器导航失败 | 提供手动保存指引（Ctrl+S / 打印为 PDF）|
 | 文件写入失败 | 请用户确认输出目录有效性 |
 | 内容仍不完整 | 在文档中标注「内容可能不完整，建议手动补充」|
 
 ## Examples
 
+### Trigger Phrases
+
+- `把这个页面保存成 Markdown`
+- `提取这个动态页面正文并导出 markdown`
+- `抓取这个 JS 渲染页面的内容`
+- `把这个对话页面转成 markdown 文件`
+- `把这个文档页/文章页保存为 markdown`
+
 ### 触发示例
 
 - `把这个页面提取为 Markdown：https://example.com/article`
 - `提取这个动态加载页面的内容并保存`
 - `把这个 JS 渲染的网页抓取为 markdown 格式`
+- `把这个聊天记录页面导出为 markdown：https://example.com/chat`
+- `这个页面 curl 抓不到正文，帮我转成 markdown：https://example.com/docs`
 
 ### 端到端示例
 
@@ -125,16 +147,16 @@ argument-hint: [webpage-url]
 2. 截图确认加载成功
 3. 滚动加载全部内容（README、代码块等）
 4. `browser_get_html` 获取完整 DOM
-5. 解析 HTML → 识别 `<main>` 主内容区
-6. 清理 `<script>`/`<style>`，保留标题层级和代码块
-7. 转换为 Markdown 并按模板格式化
+5. 识别 `<main>` 主内容区并排除导航、页脚等噪声
+6. 调用 `scripts/html_to_markdown.py` 转换正文
+7. 检查 Markdown 是否存在空代码块、样式文本或正文缺失
 8. 写入 `skill-dynamic-page-to-markdown.md`
 
 ## Reference
 
-详细工具说明与配置方法见 `references/`：
+仅在需要补充细节时读取 `references/`：
 
 | 文件 | 内容 |
 |------|------|
-| `references/browser-use-mcp.md` | browser-use MCP 工具完整列表、参数说明、常见问题 |
-| `references/markdown-template.md` | 输出 Markdown 模板、格式规范、标题层级映射表 |
+| `references/browser-use-mcp.md` | browser-use MCP 工具用法、推荐调用顺序、失败处理 |
+| `references/markdown-template.md` | Markdown 模板、格式规范、转换检查清单 |

@@ -1,53 +1,32 @@
 # 安装指南
 
+本文件仅说明作为独立技能仓库时的获取方式。
+本地扫描路径安装、手动 slash 调用、运行时本机配置等内容，应迁移到独立的本地安装说明文档。
+
 ## 前置依赖
 
-- **Python 3.8+**（用于运行 `scripts/html_to_markdown.py`）
-- **browser-use MCP** 已配置并运行（端口 9222，驱动 Edge 浏览器）
-- Mavis 或 Claude Code 运行环境
+- Python 3.8+（用于运行 `scripts/html_to_markdown.py`）
+- 提供 browser-use MCP 能力的运行时
+- 支持导入 GitHub 技能仓库的上游系统
 
-## 安装步骤
-
-### 方式一：直接安装到 Mavis
-
-```powershell
-mavis skill install https://github.com/JasonCai2024/skill-dynamic-page-to-markdown.git
-```
-
-### 方式二：克隆到本地
+## 获取仓库
 
 ```bash
 git clone https://github.com/JasonCai2024/skill-dynamic-page-to-markdown.git
 ```
 
-然后将目录路径添加到 Mavis 技能扫描路径：
+## 仓库导入要求
 
-```powershell
-mavis skill install "E:\BaiduSyncdisk\WorkSpace\ForAgent\SKILLS-编程开发\skill-dynamic-page-to-markdown"
-```
+- 仓库根目录必须保留 `SKILL.md`、`references/`、`scripts/`
+- `scripts/html_to_markdown.py` 需可被运行时调用
+- `.env.example` 和 `.gitignore` 应随仓库一起保留
 
-### 方式三：通过 Claude Code 使用
+## 触发提示词
 
-将本目录放入 Claude Code 的 skills 扫描路径，技能将自动识别。
+以下句式应能触发本技能：
 
-## 启动浏览器自动化
-
-在使用本技能前，确保 browser-use MCP 已启动：
-
-```powershell
-powershell -File C:\Users\pc\.mavis\bin\start-edge-cdp.ps1
-```
-
-## 验证安装
-
-安装后，可在 Mavis 中运行：
-
-```
-/skill skill-dynamic-page-to-markdown
-```
-
-或直接触发：
-
-```
-把这个页面提取为 Markdown：https://example.com/article
-```
+- `把这个页面保存成 Markdown`
+- `提取这个动态页面正文并导出 markdown`
+- `抓取这个 JS 渲染页面的内容`
+- `把这个对话页面转成 markdown 文件`
+- `这个页面 curl 抓不到正文，帮我转成 markdown`

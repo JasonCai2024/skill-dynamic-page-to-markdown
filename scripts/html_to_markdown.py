@@ -14,6 +14,7 @@ import re
 import sys
 from datetime import datetime
 from html.parser import HTMLParser
+from urllib.parse import urlparse
 
 
 class HTMLToMarkdownConverter(HTMLParser):
@@ -23,26 +24,58 @@ class HTMLToMarkdownConverter(HTMLParser):
         self.tag_stack = []
         self.in_pre = False
         self.pre_content = []
-        self.in_list = False
-        self.list_type = None
+        self.pre_lang = ''
+        self.skip_depth = 0
+        self.list_stack = []
+        self.skip_tags = {'head', 'script', 'style', 'title'}
+        self.block_tags = {
+            'article', 'aside', 'blockquote', 'br', 'div', 'footer', 'h1', 'h2', 'h3',
+            'h4', 'h5', 'h6', 'header', 'hr', 'li', 'main', 'nav', 'ol', 'p', 'pre',
+            'section', 'table', 'tr', 'ul'
+        }
+
+    def append_text(self, text):
+        if not text:
+            return
+        if self.result and not self.result[-1].endswith(('\n', ' ', '(', '[', '> ', '*', '`')):
+            self.result.append(' ')
+        self.result.append(text)
+
+    def append_block_break(self, count=2):
+        if not self.result:
+            return
+        existing = len(self.result[-1]) - len(self.result[-1].rstrip('\n'))
+        needed = max(count - existing, 0)
+        if needed:
+            self.result.append('\n' * needed)
 
     def handle_starttag(self, tag, attrs):
         attrs_dict = dict(attrs)
+        if self.skip_depth:
+            if tag in self.skip_tags:
+                self.skip_depth += 1
+            return
 
         if tag == 'h1':
-            self.result.append('\n# ')
+            self.append_block_break()
+            self.result.append('# ')
         elif tag == 'h2':
-            self.result.append('\n## ')
+            self.append_block_break()
+            self.result.append('## ')
         elif tag == 'h3':
-            self.result.append('\n### ')
+            self.append_block_break()
+            self.result.append('### ')
         elif tag == 'h4':
-            self.result.append('\n#### ')
+            self.append_block_break()
+            self.result.append('#### ')
         elif tag == 'h5':
-            self.result.append('\n##### ')
+            self.append_block_break()
+            self.result.append('##### ')
         elif tag == 'h6':
-            self.result.append('\n###### ')
+            self.append_block_break()
+            self.result.append('###### ')
         elif tag == 'p':
-            self.result.append('\n\n')
+            self.append_block_break()
         elif tag == 'br':
             self.result.append('  \n')
         elif tag == 'strong' or tag == 'b':
@@ -50,95 +83,112 @@ class HTMLToMarkdownConverter(HTMLParser):
         elif tag == 'em' or tag == 'i':
             self.result.append('*')
         elif tag == 'code':
-            if self.in_pre:
-                self.pre_content.append('<code>')
-            else:
+            if not self.in_pre:
                 self.result.append('`')
         elif tag == 'pre':
             self.in_pre = True
-            lang = ''
+            self.pre_content = []
+            self.pre_lang = ''
             if 'class' in attrs_dict:
                 match = re.search(r'language-(\w+)', attrs_dict['class'])
                 if match:
-                    lang = match.group(1)
-            self.result.append(f'\n```{lang}\n')
+                    self.pre_lang = match.group(1)
+            self.append_block_break()
         elif tag == 'a':
             href = attrs_dict.get('href', '#')
-            self.result.append(f'[')
+            self.result.append('[')
             self.tag_stack.append(('a', href))
         elif tag == 'blockquote':
-            self.result.append('\n> ')
+            self.append_block_break()
+            self.result.append('> ')
         elif tag == 'hr':
-            self.result.append('\n---\n')
+            self.append_block_break()
+            self.result.append('---')
+            self.append_block_break()
         elif tag == 'ul':
-            self.in_list = True
-            self.list_type = 'ul'
+            self.list_stack.append({'type': 'ul', 'index': 0})
         elif tag == 'ol':
-            self.in_list = True
-            self.list_type = 'ol'
+            self.list_stack.append({'type': 'ol', 'index': 0})
         elif tag == 'li':
-            if self.list_type == 'ul':
-                self.result.append('\n- ')
-            elif self.list_type == 'ol':
-                self.result.append('\n1. ')
-        elif tag == 'script' or tag == 'style':
-            pass  # skip
+            self.append_block_break(1)
+            indent = '  ' * max(len(self.list_stack) - 1, 0)
+            if self.list_stack:
+                current = self.list_stack[-1]
+                if current['type'] == 'ul':
+                    self.result.append(f'{indent}- ')
+                else:
+                    current['index'] += 1
+                    self.result.append(f"{indent}{current['index']}. ")
+        elif tag in self.skip_tags:
+            self.skip_depth = 1
         elif tag == 'img':
             src = attrs_dict.get('src', '')
             alt = attrs_dict.get('alt', '')
-            self.result.append(f'![{alt}]({src})')
-        elif tag == 'div' or tag == 'span':
-            pass  # inline containers, ignore
+            if src:
+                self.append_text(f'![{alt}]({src})')
+        elif tag in {'div', 'section', 'article', 'main'}:
+            self.append_block_break()
 
     def handle_endtag(self, tag):
+        if self.skip_depth:
+            if tag in self.skip_tags:
+                self.skip_depth -= 1
+            return
         if tag == 'strong' or tag == 'b':
             self.result.append('**')
         elif tag == 'em' or tag == 'i':
             self.result.append('*')
         elif tag == 'code':
-            if self.in_pre:
-                self.pre_content.append('</code>')
-            else:
+            if not self.in_pre:
                 self.result.append('`')
         elif tag == 'pre':
             self.in_pre = False
-            self.result.append('\n```\n')
+            code = ''.join(self.pre_content).rstrip('\n')
+            self.result.append(f"```{self.pre_lang}\n{code}\n```")
+            self.pre_content = []
+            self.pre_lang = ''
+            self.append_block_break()
         elif tag == 'a':
             if self.tag_stack and self.tag_stack[-1][0] == 'a':
                 _, href = self.tag_stack.pop()
                 self.result.append(f']({href})')
         elif tag == 'ul' or tag == 'ol':
-            self.in_list = False
-            self.list_type = None
-        elif tag == 'h1':
-            self.result.append('\n')
-        elif tag == 'h2':
-            self.result.append('\n')
-        elif tag == 'h3':
-            self.result.append('\n')
-        elif tag == 'h4':
-            self.result.append('\n')
-        elif tag == 'h5':
-            self.result.append('\n')
-        elif tag == 'h6':
-            self.result.append('\n')
+            if self.list_stack:
+                self.list_stack.pop()
+            self.append_block_break()
+        elif tag in self.block_tags:
+            self.append_block_break()
 
     def handle_data(self, data):
-        text = data.strip()
-        if not text:
+        if self.skip_depth:
             return
+        data = data.replace('\ufeff', '')
         if self.in_pre:
-            self.pre_content.append(text)
+            self.pre_content.append(data)
         else:
-            # collapse whitespace
-            text = re.sub(r'\s+', ' ', text)
-            self.result.append(text)
+            normalized = re.sub(r'\s+', ' ', data)
+            text = normalized.strip()
+            if not text:
+                return
+            if normalized.startswith(' ') and self.result and not self.result[-1].endswith((' ', '\n')):
+                self.result.append(' ')
+            self.append_text(text)
+            if normalized.endswith(' ') and not self.result[-1].endswith((' ', '\n')):
+                self.result.append(' ')
 
     def get_markdown(self):
         result = ''.join(self.result)
-        # cleanup extra newlines
         result = re.sub(r'\n{3,}', '\n\n', result)
+        result = re.sub(r'[ \t]+\n', '\n', result)
         return result.strip()
+
+
+def infer_title_from_url(url: str) -> str:
+    parsed = urlparse(url)
+    path = parsed.path.rstrip('/')
+    if path:
+        return path.split('/')[-1] or parsed.netloc or 'untitled-page'
+    return parsed.netloc or 'untitled-page'
 
 
 def convert(html: str, url: str = '', page_title: str = '') -> str:
@@ -151,10 +201,10 @@ def convert(html: str, url: str = '', page_title: str = '') -> str:
 
     content = converter.get_markdown()
     date = datetime.now().strftime('%Y年%m月%d日')
+    title = page_title.strip() or infer_title_from_url(url)
 
     lines = []
-    if page_title:
-        lines.append(f'# {page_title}')
+    lines.append(f'# {title}')
     lines.append(f'\n> 来源： {url}')
     lines.append(f'> 日期： {date}')
     lines.append('\n---')
