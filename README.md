@@ -15,9 +15,14 @@
 skill-dynamic-page-to-markdown/
 ├─ SKILL.md           # 技能核心说明（供 Mavis/Claude Code 读取）
 ├─ README.md          # 本文件
+├─ INSTALL.md         # 安装指南
 ├─ .env.example       # 环境变量示例（本技能无需凭证）
 ├─ .gitignore         # Git 忽略配置
-└─ references/        # （预留，暂无子文件）
+├─ references/
+│   ├─ browser-use-mcp.md    # browser-use MCP 工具说明
+│   └─ markdown-template.md  # Markdown 格式模板与规范
+└─ scripts/
+    └─ html_to_markdown.py   # HTML 转 Markdown 转换脚本
 ```
 
 ## 安装
