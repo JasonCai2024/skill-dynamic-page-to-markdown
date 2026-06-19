@@ -10,7 +10,7 @@ argument-hint: [webpage-url]
 
 ## Goal
 
-通过 browser-use MCP 驱动真实浏览器，加载 JavaScript 渲染的网页，提取其完整内容并保存为格式规范的 Markdown 文档。
+通过 browser-use MCP 驱动真实浏览器，加载 JavaScript 渲染的网页，提取其完整内容并保存为格式规范的 Markdown 文档。本技能只使用 browser-use 工具链，不回退到其他浏览器或抓取工具。
 
 ## Required Inputs
 
@@ -24,19 +24,23 @@ argument-hint: [webpage-url]
 
 ### Step 1：打开目标页面
 
-使用 `browser_navigate` 打开目标网页 URL。
+使用 `browser-use_browser_navigate` 打开目标网页 URL。
 
 ### Step 2：验证页面加载
 
-使用 `browser_get_state` 截图确认页面已加载（`include_screenshot: true`）。
+使用 `browser-use_browser_get_state` 截图确认页面已加载（`include_screenshot: true`）。
 
 ### Step 3：滚动加载全部内容
 
-使用 `browser_scroll` 触发懒加载内容。重复滚动直到所有内容可见。若页面无限滚动，则滚动至底部后等待 2 秒再继续，直到连续两次滚动后新增内容不再变化。
+使用 `browser-use_browser_scroll` 触发懒加载内容。重复滚动直到所有内容可见。若页面无限滚动，则滚动至底部后等待 2 秒再继续，直到连续两次滚动后新增内容不再变化。
 
 ### Step 4：提取完整 HTML
 
-使用 `browser_get_html` 获取页面完整 DOM HTML。只有在 DOM 提取明显失败时，才允许回退到 `browser_extract_content`。
+使用 `browser-use_browser_get_html` 获取页面完整 DOM HTML。不要切换到 Playwright、通用 browser 工具或其他抓取工具。
+
+### Step 4.5：确认 browser-use 会话状态
+
+若 `browser-use_browser_get_html`、`browser-use_browser_get_state` 或相邻 browser-use 工具返回 `SessionManager not initialized`、会话未创建、浏览器未连接等错误，不要改用其他工具链。直接报告 browser-use MCP 运行环境异常，并要求先修复 browser-use 会话后再重试。
 
 ### Step 5：解析 HTML 结构
 
@@ -92,7 +96,8 @@ python scripts/html_to_markdown.py --file <captured.html> --url "<url>" --title 
 4. **聊天/对话页面**：必须尽量区分用户消息与助手回复，并在 Markdown 中保留发言顺序
 5. **代码块保留**：保留原始换行、缩进和语言标记（` ```lang `）
 6. **图片处理**：若需保留图片，仅保留 `src` 与 Markdown 图片语法；不额外下载资源
-7. **正文定位失败**：先重新滚动并重新抓取 DOM；仍失败时降级使用 `browser_extract_content`
+7. **browser-use 会话异常**：若出现 `SessionManager not initialized`、浏览器未连接或会话丢失，停止执行并报告环境故障，不切换到其他工具
+8. **正文定位失败**：先重新滚动并重新抓取 DOM；仍失败则在 browser-use 工具链内报告抓取失败，不跨工具回退
 
 ## Output Requirements
 
@@ -115,8 +120,9 @@ python scripts/html_to_markdown.py --file <captured.html> --url "<url>" --title 
 
 | 失败场景 | 回退方案 |
 |---------|---------|
-| DOM 提取或正文定位失败 | 降级使用 `browser_extract_content` 作为替代 |
-| 浏览器导航失败 | 提供手动保存指引（Ctrl+S / 打印为 PDF）|
+| browser-use 会话异常 | 明确报告 browser-use MCP 运行环境异常，要求先修复会话或浏览器连接后重试 |
+| DOM 提取或正文定位失败 | 在结果中标注 browser-use 已成功加载页面但正文识别失败，建议人工调整页面状态后重试 |
+| 浏览器导航失败 | 提供手动保存指引（Ctrl+S / 打印为 PDF） |
 | 文件写入失败 | 请用户确认输出目录有效性 |
 | 内容仍不完整 | 在文档中标注「内容可能不完整，建议手动补充」|
 
@@ -143,10 +149,10 @@ python scripts/html_to_markdown.py --file <captured.html> --url "<url>" --title 
 用户：`把 https://github.com/JasonCai2024/skill-dynamic-page-to-markdown 的内容保存为 markdown`
 
 执行流程：
-1. `browser_navigate` 打开目标页面
+1. `browser-use_browser_navigate` 打开目标页面
 2. 截图确认加载成功
 3. 滚动加载全部内容（README、代码块等）
-4. `browser_get_html` 获取完整 DOM
+4. `browser-use_browser_get_html` 获取完整 DOM
 5. 识别 `<main>` 主内容区并排除导航、页脚等噪声
 6. 调用 `scripts/html_to_markdown.py` 转换正文
 7. 检查 Markdown 是否存在空代码块、样式文本或正文缺失

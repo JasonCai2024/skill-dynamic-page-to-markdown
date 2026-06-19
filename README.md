@@ -49,11 +49,11 @@ git clone https://github.com/JasonCai2024/skill-dynamic-page-to-markdown.git
 
 | 决策 | 说明 |
 |------|------|
-| 工具选型 | 优先使用 `browser_navigate` + `browser_get_html` 而非 `browser_extract_content`，确保获取真实 DOM |
+| 工具选型 | 仅使用 `browser-use_browser_navigate` + `browser-use_browser_get_html` 工具链，确保获取真实 DOM |
 | 内容提取 | 从 HTML 结构中识别语义容器（`<main>`, `<article>` 等），而非纯文本拼接 |
 | 滚动加载 | 显式滚动步骤以触发懒加载内容，避免截断 |
 | 格式模板 | 固定包含来源 URL、提取日期、AI 免责声明，保证引用可追溯 |
-| 回退策略 | HTML 解析失败时降级到 `browser_extract_content`，仍失败则提供手动保存指引 |
+| 回退策略 | browser-use 会话异常时直接报环境故障；正文定位失败时保留失败结论，不跨工具降级 |
 
 ## 工作流程
 

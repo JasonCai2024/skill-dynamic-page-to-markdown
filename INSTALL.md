@@ -6,7 +6,7 @@
 ## 前置依赖
 
 - Python 3.8+（用于运行 `scripts/html_to_markdown.py`）
-- 提供 browser-use MCP 能力的运行时
+- 提供 browser-use MCP 能力且可正常初始化会话的运行时
 - 支持导入 GitHub 技能仓库的上游系统
 
 ## 获取仓库
@@ -30,3 +30,9 @@ git clone https://github.com/JasonCai2024/skill-dynamic-page-to-markdown.git
 - `抓取这个 JS 渲染页面的内容`
 - `把这个对话页面转成 markdown 文件`
 - `这个页面 curl 抓不到正文，帮我转成 markdown`
+
+## 运行边界
+
+- 本技能只使用 browser-use 工具链
+- 若出现 `SessionManager not initialized` 等 browser-use 会话错误，应先修复运行环境，再重新执行技能
+- 不使用 Playwright 或其他浏览器工具作为降级路径
