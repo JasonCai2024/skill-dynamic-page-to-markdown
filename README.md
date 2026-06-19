@@ -12,7 +12,7 @@
 ## 文件结构
 
 ```
-dynamic-page-to-markdown/
+skill-dynamic-page-to-markdown/
 ├─ SKILL.md           # 技能核心说明（供 Mavis/Claude Code 读取）
 ├─ README.md          # 本文件
 ├─ .env.example       # 环境变量示例（本技能无需凭证）
@@ -37,7 +37,7 @@ mavis skill install <本地路径>
 ### 方式三：通过 GitHub 仓库安装
 
 ```bash
-git clone https://github.com/JasonCai2024/dynamic-page-to-markdown.git
+git clone https://github.com/JasonCai2024/skill-dynamic-page-to-markdown.git
 ```
 
 ## 前置依赖

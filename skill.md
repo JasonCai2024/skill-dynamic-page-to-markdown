@@ -1,12 +1,12 @@
 ---
-name: dynamic-page-to-markdown
+name: skill-dynamic-page-to-markdown
 description: Extracts content from dynamically rendered web pages and saves as Markdown. Use when user provides a webpage URL with JavaScript-rendered content that cannot be extracted via simple HTTP fetch. Triggers on: save webpage content, extract dynamic page, scrape JS-rendered page.
 disable-model-invocation: true
 user-invocable: true
 argument-hint: [webpage-url]
 ---
 
-# Dynamic Page to Markdown
+# Skill Dynamic Page to Markdown
 
 ## Goal
 
