@@ -1,6 +1,6 @@
 ---
 name: skill-dynamic-page-to-markdown
-description: 将 JavaScript 动态渲染网页的已渲染 DOM 内容提取、清洗并保存为 Markdown 文档。用于用户提供网页 URL，并要求“保存网页内容”“提取动态页面”“抓取 JS 渲染页面”“转成 Markdown”“保存对话页/文档页/文章页”为 Markdown 时触发；尤其适用于简单 HTTP 抓取拿不到正文、必须通过真实浏览器加载后再提取的场景。
+description: 使用 browser-use MCP 驱动真实浏览器，对 JavaScript 动态渲染、懒加载、目录跳转、展开折叠后才出现正文的网页进行运行态采集，并整理为 Markdown 文档。适用于“简单 HTTP/初始 HTML 抓不到完整正文”的页面；尤其适用于文档站、知识库、对话页、富文本详情页。禁止回退到其他浏览器工具链。
 disable-model-invocation: true
 user-invocable: true
 argument-hint: [webpage-url]
@@ -10,64 +10,134 @@ argument-hint: [webpage-url]
 
 ## Goal
 
-通过 browser-use MCP 驱动真实浏览器，加载 JavaScript 渲染的网页，提取其完整内容并保存为格式规范的 Markdown 文档。本技能只使用 browser-use 工具链，不回退到其他浏览器或抓取工具。
+通过 `browser-use` 让页面真正完成渲染，再基于**运行态页面内容**而不是“初始 HTML 快照”提取正文、代码块、图片、链接和结构信息，最终保存为 Markdown。
+
+这个技能的核心不是“抓 HTML”，而是：
+
+1. 用 `browser-use` 触发页面真实加载
+2. 用 `browser-use` 触发懒加载、目录跳转、展开折叠
+3. 在运行后的页面状态中采集内容
+4. 再将采集结果整理为 Markdown
 
 ## Required Inputs
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `url` | URL 字符串 | 是 | 待提取的目标网页地址 |
-| `output_path` | 文件路径 | 否 | 输出文件路径，默认为 `URL 解析的文件名.md` |
-| `page_title` | 字符串 | 否 | 页面标题，未提供时从 `<title>` 标签或 URL 路径中推断 |
+| `url` | URL 字符串 | 是 | 目标动态网页地址 |
+| `output_path` | 文件路径 | 否 | Markdown 输出路径 |
+| `page_title` | 字符串 | 否 | 页面标题；未提供时从运行态页面标题推断 |
+| `attachments_dir` | 文件路径 | 否 | 图片附件目录；默认使用 `output_path` 同级 `attachments/` |
+
+## Non-Goals
+
+- 不把“初始 HTML”当作内容真源
+- 不依赖单次 `browser-use_browser_get_html` 结果判断页面是否完整
+- 不切换到 Playwright、通用 browser、requests、curl 等其他浏览器/抓取工具链
 
 ## Workflow
 
-### Step 1：打开目标页面
+### Step 1：打开页面
 
-使用 `browser-use_browser_navigate` 打开目标网页 URL。
+使用 `browser-use_browser_navigate` 打开目标 URL。
 
-### Step 2：验证页面加载
+### Step 2：确认初始渲染
 
-使用 `browser-use_browser_get_state` 截图确认页面已加载（`include_screenshot: true`）。
+使用 `browser-use_browser_get_state(include_screenshot: true)` 确认页面已经可交互，并记录：
 
-### Step 3：滚动加载全部内容
+- 当前标题
+- 当前可见正文区域
+- 当前可见目录、导航、展开按钮、分页按钮
+- 当前可见图片数量和位置
 
-使用 `browser-use_browser_scroll` 触发懒加载内容。重复滚动直到所有内容可见。若页面无限滚动，则滚动至底部后等待 2 秒再继续，直到连续两次滚动后新增内容不再变化。
+### Step 3：识别页面加载模式
 
-### Step 4：提取完整 HTML
+基于运行态页面判断该页面属于哪一类：
 
-使用 `browser-use_browser_get_html` 获取页面完整 DOM HTML。不要切换到 Playwright、通用 browser 工具或其他抓取工具。
+- 普通长文正文页
+- 左侧目录 / 锚点跳转页
+- 折叠块 / 手风琴页
+- 无限滚动 / 懒加载流式页面
+- 对话 / 聊天记录页
 
-### Step 4.5：确认 browser-use 会话状态
+若页面存在目录、折叠块、分页、标签页、展开按钮，应优先触发这些交互，而不是直接抓 HTML。
 
-若 `browser-use_browser_get_html`、`browser-use_browser_get_state` 或相邻 browser-use 工具返回 `SessionManager not initialized`、会话未创建、浏览器未连接等错误，不要改用其他工具链。直接报告 browser-use MCP 运行环境异常，并要求先修复 browser-use 会话后再重试。
+### Step 4：驱动页面加载完整内容
 
-### Step 5：解析 HTML 结构
+必须使用 `browser-use` 让正文真正出现在运行态页面里。
 
-优先识别正文容器，并尽量排除导航、页脚、侧栏、弹窗和广告。优先级如下：
+优先策略：
 
-- 主内容区：`<main>`、`<article>`、`[role="main"]`
-- 文本块：`<p>` 及包含连续文本的语义容器
-- 列表：`<ul>`、`<ol>` 及其 `<li>` 子项
-- 标题层级：保留 `<h1>` 至 `<h6>` 的层级关系
-- 聊天/对话页面：按 `role`、消息容器结构或发言顺序区分用户与助手消息并标注归属
+1. 若存在目录（TOC），逐项点击目录项，触发对应章节渲染
+2. 若存在“展开更多 / 查看全部 / Read more / 展开”按钮，逐项点击
+3. 若正文按滚动懒加载，重复 `browser-use_browser_scroll(direction: down)`
+4. 若滚动到底后内容仍变化，继续滚动，直到连续两次采集结果无新增正文
 
-### Step 6：调用脚本转换为 Markdown
+### Step 5：以运行态内容为主进行采集
 
-将 HTML 写入临时文件后，优先调用仓库内脚本：
+采集优先级如下：
 
-```bash
-python scripts/html_to_markdown.py --file <captured.html> --url "<url>" --title "<page_title>"
+1. `browser-use_browser_get_state`
+   用于确认当前可见标题、段落、列表、按钮、链接、代码块、图片是否已实际出现
+2. `browser-use_browser_extract_content`
+   若对当前页面或当前章节可提取，则优先用它抽取结构化正文
+3. `browser-use_browser_get_html`
+   只作为**补充材料**使用，用于：
+   - 补充当前可见容器的 DOM
+   - 查找图片 `src`
+   - 保留代码块、链接、局部语义结构
+
+禁止将“抓到的初始完整 HTML”直接视为整页最终正文。
+
+### Step 6：章节化采集
+
+若页面存在目录或明显章节边界，应按章节处理：
+
+1. 点击某个目录项或滚动到某章节
+2. 使用 `browser-use_browser_get_state` 确认章节标题已可见
+3. 采集该章节正文、列表、代码块、图片、链接
+4. 记录该章节已采集
+5. 继续处理下一章节
+
+若页面目录里有 N 个章节，最终产出的 Markdown 至少应覆盖这些章节标题；若缺失，视为采集不完整。
+
+### Step 7：图片处理
+
+图片同样必须以**运行态页面**为准：
+
+1. 先在运行态确认图片已真实出现
+2. 再通过当前可见 DOM / HTML 补充图片源地址
+3. 将图片保存到 `attachments/`
+4. 在 Markdown 对应位置使用本地相对路径引用
+
+如果图片在截图中可见，但运行态 DOM 中暂时拿不到稳定 `src`，不得伪造或错配图片；应在正文原位置插入占位说明，例如：
+
+```markdown
+[图片占位：该图片在运行态页面中可见，但未成功本地化]
 ```
 
-要求脚本输出满足以下规则：
+特别注意以下动态图片场景：
 
-- 移除 `<script>`、`<style>` 及其内容
-- 保留语义结构：标题、列表、引用、链接、图片、代码块
-- 保留代码块正文和语言标记
-- 正文为空、代码块为空、出现大段样式文本时，视为转换失败
+- 若运行态图片 `src` 为 `blob:` URL，则说明资源已经进入浏览器内存，但不一定还能通过技能工具直接反查其原始下载地址
+- 对这类图片，只有在当前运行态 DOM 明确暴露了可下载的真实 URL、token 或文件接口时，才允许落盘到 `attachments/`
+- 若页面仅暴露 `blob:` URL，而工具链无法读取其二进制内容或反查原始地址，则该图片应在正文原位置保留占位说明，而不是继续尝试复杂下载
 
-### Step 7：按模板格式化输出
+### Step 8：本地整理为 Markdown
+
+运行态内容采集完成后，再使用仓库内脚本做**整理**而不是“盲目抽正文”：
+
+```bash
+python scripts/html_to_markdown.py --file <captured-fragment.html> --url "<url>" --title "<page_title>" --attachments-dir "<output_dir>/attachments" --image-path-prefix "attachments"
+```
+
+脚本在本技能中的定位：
+
+- 可以把已确认的 HTML 片段整理成 Markdown
+- 可以帮助下载已知图片 `src`
+- 不能替代 `browser-use` 完成页面完整加载和章节发现
+
+如果采集内容主要来自逐章节运行态观察，也可以直接手工整理 Markdown；不强制要求所有正文必须经过脚本。
+
+### Step 9：按模板输出
 
 ```markdown
 # [页面标题]
@@ -77,92 +147,80 @@ python scripts/html_to_markdown.py --file <captured.html> --url "<url>" --title 
 
 ---
 
-[正文内容，保持正确标题层级]
+[正文内容]
 
 ---
 
 *内容由 AI 提取，不能完全保障原始内容的完全准确性*
 ```
 
-### Step 8：保存文档
+### Step 10：保存文件
 
-将脚本标准输出写入 `output_path`（UTF-8 编码）。若未提供 `output_path`，则使用基于 URL 推断的文件名。
+将 Markdown 以 UTF-8 写入 `output_path`。
+
+若页面存在图片：
+
+- 确保 `attachments/` 已创建
+- 确保 Markdown 引用的是本地相对路径
+- 确保没有把错误图片引用到错误章节
 
 ## Decision Rules
 
-1. **页面加载失败**：重试导航最多 2 次，仍失败则报告错误
-2. **内容被截断**：向下滚动后重新获取 HTML
-3. **无法确定标题**：使用文件名或 URL 路径作为回退标题
-4. **聊天/对话页面**：必须尽量区分用户消息与助手回复，并在 Markdown 中保留发言顺序
-5. **代码块保留**：保留原始换行、缩进和语言标记（` ```lang `）
-6. **图片处理**：若需保留图片，仅保留 `src` 与 Markdown 图片语法；不额外下载资源
-7. **browser-use 会话异常**：若出现 `SessionManager not initialized`、浏览器未连接或会话丢失，停止执行并报告环境故障，不切换到其他工具
-8. **正文定位失败**：先重新滚动并重新抓取 DOM；仍失败则在 browser-use 工具链内报告抓取失败，不跨工具回退
+1. **完整性优先于自动化**
+   如果“自动抓 HTML”与“运行态逐章节采集”冲突，优先后者。
 
-## Output Requirements
+2. **以运行态为准**
+   页面截图、可见标题、可见正文、可见图片，优先级高于初始 HTML。
 
-返回以下信息：
+3. **目录数对正文数**
+   若目录中存在多个章节，而 Markdown 中未覆盖，视为提取不完整。
 
-1. **文件路径**：保存的 Markdown 文件完整路径
-2. **内容摘要**：标题数量、估计字符数、内容结构说明
-3. **执行状态**：保存成功或错误详情
+4. **可见图片对落盘图片**
+   若页面可见图片明显多于本地附件数，应在结果中说明缺口。
+
+5. **不伪造图片**
+   若图片源地址未拿到，不要复用或错配其他图片；改为在原位置插入图片占位说明。
+
+6. **browser-use 会话异常即停止**
+   若出现 `SessionManager not initialized`、会话丢失、浏览器未连接等错误，应报告环境故障，而不是改走其他工具链。
+
+7. **无预警跳回 `about:blank` 视为会话异常**
+   若页面在继续采集过程中无用户指令地跳回 `about:blank`、空标签页或丢失当前 DOM，上述情况同样视为 browser-use 会话不稳定，应记录为运行环境问题。
 
 ## Validation
 
-1. 确认文件写入成功
-2. 确认 Markdown 包含有意义内容（非空）
-3. 确认标题层级被正确保留（`h1` → `#`，`h2` → `##`，以此类推）
-4. 确认无残留 HTML 标签和大段 CSS/JS 文本
-5. 确认代码块正文未丢失
-6. 确认正文不是以站点导航、页脚或广告为主
+1. 文件写入成功
+2. Markdown 非空，且不是导航、页脚、菜单为主
+3. 标题层级可读
+4. 代码块正文未丢失
+5. 若存在目录，目录章节基本都在正文中出现
+6. 若原页面存在图片，`attachments/` 与 Markdown 图片引用一致
+7. 未将无关图片错误引用到 FAQ、正文示意图等位置
 
 ## Fallback
 
-| 失败场景 | 回退方案 |
+| 失败场景 | 处理方式 |
 |---------|---------|
-| browser-use 会话异常 | 明确报告 browser-use MCP 运行环境异常，要求先修复会话或浏览器连接后重试 |
-| DOM 提取或正文定位失败 | 在结果中标注 browser-use 已成功加载页面但正文识别失败，建议人工调整页面状态后重试 |
-| 浏览器导航失败 | 提供手动保存指引（Ctrl+S / 打印为 PDF） |
-| 文件写入失败 | 请用户确认输出目录有效性 |
-| 内容仍不完整 | 在文档中标注「内容可能不完整，建议手动补充」|
+| browser-use 会话异常 | 报告 browser-use 运行环境故障，停止执行 |
+| 页面截图可见正文，但 `extract_content` 失败 | 改用逐章节 `get_state` + 局部 `get_html` 采集 |
+| 初始 HTML 缺失后半段正文 | 继续点击目录、滚动、展开，不得直接认定页面正文结束 |
+| 图片可见但拿不到稳定 `src` | 保留正文，并在原位置插入图片占位说明 |
+| 图片只有 `blob:` URL | 视为运行态可见图片；若无法反查原始地址，则直接保留图片占位说明 |
+| 输出仍不完整 | 在结果中明确标注“内容可能不完整”，说明缺失章节或图片范围 |
 
-## Examples
+## Trigger Phrases
 
-### Trigger Phrases
-
-- `把这个页面保存成 Markdown`
-- `提取这个动态页面正文并导出 markdown`
-- `抓取这个 JS 渲染页面的内容`
-- `把这个对话页面转成 markdown 文件`
-- `把这个文档页/文章页保存为 markdown`
-
-### 触发示例
-
-- `把这个页面提取为 Markdown：https://example.com/article`
-- `提取这个动态加载页面的内容并保存`
-- `把这个 JS 渲染的网页抓取为 markdown 格式`
-- `把这个聊天记录页面导出为 markdown：https://example.com/chat`
-- `这个页面 curl 抓不到正文，帮我转成 markdown：https://example.com/docs`
-
-### 端到端示例
-
-用户：`把 https://github.com/JasonCai2024/skill-dynamic-page-to-markdown 的内容保存为 markdown`
-
-执行流程：
-1. `browser-use_browser_navigate` 打开目标页面
-2. 截图确认加载成功
-3. 滚动加载全部内容（README、代码块等）
-4. `browser-use_browser_get_html` 获取完整 DOM
-5. 识别 `<main>` 主内容区并排除导航、页脚等噪声
-6. 调用 `scripts/html_to_markdown.py` 转换正文
-7. 检查 Markdown 是否存在空代码块、样式文本或正文缺失
-8. 写入 `skill-dynamic-page-to-markdown.md`
+- `把这个动态网页保存成 Markdown`
+- `提取这个 JS 渲染页面正文`
+- `这个页面要等加载完才能抓，帮我转成 markdown`
+- `把这个文档站页面完整保存为 Markdown`
+- `提取这个飞书/知识库/文档页并导出 markdown`
 
 ## Reference
 
-仅在需要补充细节时读取 `references/`：
+按需读取：
 
-| 文件 | 内容 |
+| 文件 | 用途 |
 |------|------|
-| `references/browser-use-mcp.md` | browser-use MCP 工具用法、推荐调用顺序、失败处理 |
-| `references/markdown-template.md` | Markdown 模板、格式规范、转换检查清单 |
+| `references/browser-use-mcp.md` | browser-use 工具的推荐调用顺序、运行态采集原则 |
+| `references/markdown-template.md` | Markdown 模板、结构和校验规则 |

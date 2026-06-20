@@ -1,100 +1,88 @@
 # Dynamic Page to Markdown
 
-提取 JavaScript 动态渲染网页内容并保存为 Markdown 文档的技能。
+把动态网页内容提取为 Markdown 的技能，但这里的“动态网页”指的是：
 
-## 功能概览
+- 初始 HTML 不完整
+- 需要目录跳转、展开折叠、滚动懒加载后正文才出现
+- 必须依赖真实浏览器运行态才能看到完整内容
 
-- 支持 JS 渲染页面的完整内容提取
-- 自动识别页面结构（标题、段落、列表、代码块等）
-- 输出格式规范的 Markdown 文件，包含来源链接和提取时间
-- 通过 browser-use MCP 工具驱动真实浏览器，无 headless 限制
+## 当前设计定位
+
+这个技能现在明确是：
+
+- `browser-use` 驱动真实浏览器
+- 以运行态页面内容为提取主来源
+- 以 `html_to_markdown.py` 作为整理器，而不是正文真源
+
+它不再是“打开页面后抓一份 HTML 再转 Markdown”的技能。
 
 ## 文件结构
 
-```
+```text
 skill-dynamic-page-to-markdown/
-├─ SKILL.md           # 技能核心说明（供 Mavis/Claude Code 读取）
-├─ README.md          # 本文件
-├─ INSTALL.md         # 安装指南
-├─ .env.example       # 环境变量示例（本技能无需凭证）
-├─ .gitignore         # Git 忽略配置
+├─ SKILL.md
+├─ README.md
+├─ INSTALL.md
+├─ .env.example
+├─ .gitignore
 ├─ references/
-│   ├─ browser-use-mcp.md    # browser-use MCP 工具说明
-│   └─ markdown-template.md  # Markdown 格式模板与规范
+│  ├─ browser-use-mcp.md
+│  └─ markdown-template.md
 └─ scripts/
-    └─ html_to_markdown.py   # HTML 转 Markdown 转换脚本
+   └─ html_to_markdown.py
 ```
 
-## 安装
+## 核心原则
 
-### 方式一：通过 GitHub 仓库导入到上游系统
+1. 页面完整性优先
+2. 运行态内容优先于初始 HTML
+3. Browser Use 是主提取引擎，不是辅助打开器
+4. 图片宁可缺失，也不能错配
+5. 不回退到其他浏览器工具链
 
-```bash
-git clone https://github.com/JasonCai2024/skill-dynamic-page-to-markdown.git
-```
+## 脚本职责
 
-### 方式二：作为技能仓库直接导入
+`scripts/html_to_markdown.py` 的职责是：
 
-使用仓库根目录中的 `SKILL.md`、`references/`、`scripts/` 作为完整技能内容进行导入。
+- 整理已确认的 HTML 片段
+- 下载已知图片 `src`
+- 输出 Markdown
+
+它**不负责**：
+
+- 发现懒加载正文
+- 驱动目录章节渲染
+- 判断页面是否已经完整加载
+
+这些工作必须由 `browser-use` 完成。
+
+## 适用场景
+
+- 飞书云文档
+- 文档站 / 知识库
+- 目录型详情页
+- 展开后才显示全文的页面
+- 需要滚动或点击才能加载完整内容的页面
+
+## 不适用场景
+
+- 只是普通静态 HTML 页面，直接抓源代码即可
+- 明知需要其他网站 API 才能取回数据，但又禁止交互加载的页面
+
+## 触发提示词
+
+- `把这个动态网页保存成 Markdown`
+- `提取这个 JS 渲染页面正文`
+- `这个页面要加载完才能抓，帮我转成 markdown`
+- `把这个文档页完整导出为 Markdown`
 
 ## 前置依赖
 
-- 提供 browser-use MCP 能力的运行时
-- Python 3.8+（用于运行 `scripts/html_to_markdown.py`）
-- 支持读取仓库根目录技能结构的上游系统
+- 提供 `browser-use` MCP 的运行时
+- Python 3.8+（用于运行整理脚本）
 
-> 注意：本技能不依赖任何外部 API 或凭证，无需配置 `.env`。
+## 安全边界
 
-## 核心设计决策
-
-| 决策 | 说明 |
-|------|------|
-| 工具选型 | 仅使用 `browser-use_browser_navigate` + `browser-use_browser_get_html` 工具链，确保获取真实 DOM |
-| 内容提取 | 从 HTML 结构中识别语义容器（`<main>`, `<article>` 等），而非纯文本拼接 |
-| 滚动加载 | 显式滚动步骤以触发懒加载内容，避免截断 |
-| 格式模板 | 固定包含来源 URL、提取日期、AI 免责声明，保证引用可追溯 |
-| 回退策略 | browser-use 会话异常时直接报环境故障；正文定位失败时保留失败结论，不跨工具降级 |
-
-## 工作流程
-
-```mermaid
-flowchart TD
-    A[接收 URL] --> B[浏览器打开页面]
-    B --> C{页面加载成功?}
-    C -->|否| D[重试最多2次]
-    D --> B
-    C -->|是| E[截图验证加载]
-    E --> F[滚动加载全部内容]
-    F --> G[获取完整 HTML]
-    G --> H[解析语义结构]
-    H --> I[清理并转为 Markdown]
-    I --> J[按模板格式化]
-    J --> K[写入文件]
-    K --> L{写入成功?}
-    L -->|否| M[提示用户提供有效目录]
-    L -->|是| N[返回文件路径和摘要]
-```
-
-## 调用示例
-
-```
-把这个页面保存成 Markdown：https://example.com/article
-提取这个动态页面正文并导出 markdown
-抓取这个 JS 渲染页面的内容
-把这个对话页面转成 markdown 文件
-```
-
-## 凭证安全
-
-本技能**不涉及任何外部 API 调用**，不存储、不使用任何敏感凭证。
-`.env.example` 文件仅作为规范占位，实际运行无需任何环境变量。
-
-## 获取与安装说明
-
-仓库根目录适合作为独立技能仓库维护和发布。
-如需本地扫描路径安装、Claude Code 本地发现或手动 slash 调用，请参考同级独立说明文档，不在本仓库 README 中展开。
-
-## 参考链接
-
-- [Claude Code 技能文档](https://code.claude.com/docs/en/skills)
-- [Anthropic 官方 Skills 示例](https://github.com/anthropics/skills)
+- 不使用 Playwright 作为降级路径
+- 不使用其他抓取工具链替代 `browser-use`
+- 出现 `SessionManager not initialized` 等错误时，视为环境异常而不是页面内容异常

@@ -2,7 +2,12 @@
 """
 html_to_markdown.py
 
-将 HTML 字符串转换为 Markdown 格式。
+将已确认的 HTML 片段整理为 Markdown。
+
+注意：
+1. 本脚本不是动态页面完整性发现器。
+2. 它不能替代 browser-use 去驱动懒加载、目录跳转、展开折叠。
+3. 在本技能中，它的职责是“整理已采集内容”，不是“证明页面内容已经采集完整”。
 
 Usage:
     python html_to_markdown.py --html "<html>...</html>" --url "https://example.com"
@@ -10,15 +15,19 @@ Usage:
 """
 
 import argparse
+import hashlib
+import mimetypes
 import re
 import sys
 from datetime import datetime
 from html.parser import HTMLParser
-from urllib.parse import urlparse
+from pathlib import Path
+from urllib.parse import unquote, urljoin, urlparse
+from urllib.request import Request, urlopen
 
 
 class HTMLToMarkdownConverter(HTMLParser):
-    def __init__(self):
+    def __init__(self, page_url: str = '', attachments_dir: str = '', image_path_prefix: str = 'attachments'):
         super().__init__()
         self.result = []
         self.tag_stack = []
@@ -33,6 +42,11 @@ class HTMLToMarkdownConverter(HTMLParser):
             'h4', 'h5', 'h6', 'header', 'hr', 'li', 'main', 'nav', 'ol', 'p', 'pre',
             'section', 'table', 'tr', 'ul'
         }
+        self.page_url = page_url
+        self.attachments_dir = Path(attachments_dir) if attachments_dir else None
+        self.image_path_prefix = image_path_prefix.replace('\\', '/').rstrip('/') or 'attachments'
+        self.image_map = {}
+        self.image_counter = 0
 
     def append_text(self, text):
         if not text:
@@ -48,6 +62,55 @@ class HTMLToMarkdownConverter(HTMLParser):
         needed = max(count - existing, 0)
         if needed:
             self.result.append('\n' * needed)
+
+    def resolve_image_src(self, src: str) -> str:
+        if src.startswith('//'):
+            scheme = urlparse(self.page_url).scheme or 'https'
+            return f'{scheme}:{src}'
+        return urljoin(self.page_url, src) if self.page_url else src
+
+    def guess_extension(self, resolved_src: str, content_type: str = '') -> str:
+        path = urlparse(resolved_src).path
+        suffix = Path(unquote(path)).suffix
+        if suffix:
+            return suffix.lower()
+        if content_type:
+            ext = mimetypes.guess_extension(content_type.split(';', 1)[0].strip())
+            if ext:
+                return ext
+        return '.bin'
+
+    def download_image(self, src: str, alt: str) -> str:
+        resolved_src = self.resolve_image_src(src)
+        if not self.attachments_dir:
+            return resolved_src
+        if resolved_src in self.image_map:
+            return self.image_map[resolved_src]
+
+        self.attachments_dir.mkdir(parents=True, exist_ok=True)
+        self.image_counter += 1
+        digest = hashlib.sha1(resolved_src.encode('utf-8')).hexdigest()[:10]
+        ext = self.guess_extension(resolved_src)
+        filename = f'image-{self.image_counter:03d}-{digest}{ext}'
+        local_path = self.attachments_dir / filename
+        request = Request(
+            resolved_src,
+            headers={
+                'User-Agent': 'Mozilla/5.0',
+                'Referer': self.page_url or resolved_src,
+            },
+        )
+        with urlopen(request, timeout=20) as response:
+            content = response.read()
+            content_type = response.headers.get('Content-Type', '')
+        if not local_path.suffix or local_path.suffix == '.bin':
+            better_ext = self.guess_extension(resolved_src, content_type)
+            if better_ext != local_path.suffix:
+                local_path = local_path.with_suffix(better_ext)
+        local_path.write_bytes(content)
+        relative_path = f'{self.image_path_prefix}/{local_path.name}'
+        self.image_map[resolved_src] = relative_path
+        return relative_path
 
     def handle_starttag(self, tag, attrs):
         attrs_dict = dict(attrs)
@@ -123,9 +186,10 @@ class HTMLToMarkdownConverter(HTMLParser):
             self.skip_depth = 1
         elif tag == 'img':
             src = attrs_dict.get('src', '')
-            alt = attrs_dict.get('alt', '')
+            alt = attrs_dict.get('alt', 'image')
             if src:
-                self.append_text(f'![{alt}]({src})')
+                local_or_remote = self.download_image(src, alt)
+                self.append_text(f'![{alt}]({local_or_remote})')
         elif tag in {'div', 'section', 'article', 'main'}:
             self.append_block_break()
 
@@ -191,9 +255,19 @@ def infer_title_from_url(url: str) -> str:
     return parsed.netloc or 'untitled-page'
 
 
-def convert(html: str, url: str = '', page_title: str = '') -> str:
-    """将 HTML 转换为 Markdown 文档。"""
-    converter = HTMLToMarkdownConverter()
+def convert(
+    html: str,
+    url: str = '',
+    page_title: str = '',
+    attachments_dir: str = '',
+    image_path_prefix: str = 'attachments',
+) -> str:
+    """将已采集的 HTML 片段转换为 Markdown 文档。"""
+    converter = HTMLToMarkdownConverter(
+        page_url=url,
+        attachments_dir=attachments_dir,
+        image_path_prefix=image_path_prefix,
+    )
     try:
         converter.feed(html)
     except Exception as e:
@@ -221,6 +295,8 @@ if __name__ == '__main__':
     parser.add_argument('--file', type=str, help='HTML 文件路径')
     parser.add_argument('--url', type=str, default='', help='来源 URL')
     parser.add_argument('--title', type=str, default='', help='页面标题')
+    parser.add_argument('--attachments-dir', type=str, default='', help='图片下载目录')
+    parser.add_argument('--image-path-prefix', type=str, default='attachments', help='Markdown 中图片路径前缀')
     args = parser.parse_args()
 
     if args.file:
@@ -232,5 +308,11 @@ if __name__ == '__main__':
         print('请提供 --html 或 --file 参数', file=sys.stderr)
         sys.exit(1)
 
-    md = convert(html, args.url, args.title)
+    md = convert(
+        html,
+        args.url,
+        args.title,
+        attachments_dir=args.attachments_dir,
+        image_path_prefix=args.image_path_prefix,
+    )
     print(md)
